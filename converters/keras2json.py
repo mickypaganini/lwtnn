@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 #
 # Converter from Keras (version 1.0.0) saved NN to JSON
 """____________________________________________________________________

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Utility to aid in regression tests
 
 Reads from a pipe. The pipe data should be formatted as

@@ -51,7 +51,7 @@ int main(int argc, char* argv[]) {
   auto config = lwt::parse_json(in_file);
 
   lwt::LightweightRNN rnn(config.inputs, config.layers, config.outputs);
-  const auto inputs = get_values_vec(config.inputs, 20);
+  const auto inputs = get_values_vec(config.inputs, 20); 
   auto outs = rnn.reduce(inputs);
   for (const auto& out: outs) {
     std::cout << out.first << " " << out.second << std::endl;

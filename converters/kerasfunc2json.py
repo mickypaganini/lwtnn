@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Converter from Keras sequential NN to JSON
+# Converter from Keras functinal API to JSON
 """____________________________________________________________________
 Variable specification file
 
@@ -34,11 +34,13 @@ def _run():
     _check_version(arch)
 
     with h5py.File(args.hdf5_file, 'r') as h5:
+        h5 = h5['model_weights']
         layers, node_dict = _get_layers_and_nodes(arch, h5)
     input_layer_arch = arch['config']['input_layers']
     nodes = _build_node_list(node_dict, input_layer_arch)
 
     vars_per_input = _get_vars_per_input(input_layer_arch, node_dict)
+    print vars_per_input
     out_dict = {
         'layers': layers, 'nodes': nodes,
         'inputs': _parse_inputs(
@@ -61,10 +63,10 @@ def _check_version(arch):
         sys.stderr.write(
             'WARNING: no version number found for this archetecture!\n')
         return
-    major, minor, *bugfix = arch['keras_version'].split('.')
-    if major != '1' or minor < '2':
+    major, minor, bugfix = arch['keras_version'].split('.')
+    if major != '2' or minor < '0':
         warn_tmp = (
-            "WARNNING: This converter was developed for Keras version 1.2. "
+            "WARNNING: This converter was developed for Keras version 2.0. "
             "Your version (v{}.{}) may be incompatible.\n")
         sys.stderr.write(warn_tmp.format(major, minor))
 
@@ -138,9 +140,10 @@ class Node:
         self.dims = None
         inbound = layer['inbound_nodes']
         if self.layer_type != "inputlayer":
-            for sname, sidx, something in inbound[idx]:
+            for sname, sidx, something, sdict in inbound[idx]:
                 assert something == 0
                 self.sources.append( (sname, sidx) )
+
         else:
             shape = layer['config']['batch_input_shape']
             self.n_outputs = shape[-1]
@@ -168,7 +171,7 @@ def _build_node_dict(network):
     # first get the nodes that something points to
     for layer in layers.values():
         for sink in layer['inbound_nodes']:
-            for kname, kid, something in sink:
+            for kname, kid, something, dic in sink:
                 nodes[(kname, kid)] = Node(layers[kname], kid)
 
     # get the output nodes now
@@ -203,7 +206,8 @@ def _build_layer(output_layers, node_key, h5, node_dict, layer_dict):
     if node.layer_type == 'merge':
         node.n_outputs = 0
         for source in node.sources:
-            node.n_outputs += source.n_outputs
+            if source.n_outputs is not None:
+                node.n_outputs += source.n_outputs
         return
 
     assert len(node.sources) == 1
@@ -217,6 +221,7 @@ def _build_layer(output_layers, node_key, h5, node_dict, layer_dict):
 
     layer_type = node.layer_type
     if layer_type in skip_layers:
+        node.n_outputs = sum(s.n_outputs for s in node.sources)
         return
     convert = layer_converters[layer_type]
 
@@ -235,7 +240,10 @@ _node_type_map = {
     'merge': 'concatenate',
     'inputlayer': 'input',
     'dense': 'feed_forward',
+    'highway': 'feed_forward',
     'lstm': 'sequence',
+    'gru': 'sequence',
+    'embedding': 'sequence'
 }
 
 def _build_node_list(node_dict, input_layer_arch):
@@ -252,6 +260,9 @@ def _build_node_list(node_dict, input_layer_arch):
         submap[kname] = n_in
 
     for node in sorted(node_dict.values()):
+        if node.layer_type in skip_layers:
+            #print 'Removing ' + node.layer_type
+            continue
         node_type = _node_type_map[node.layer_type]
         out_node = {'type': node_type}
         if node.sources:
@@ -279,7 +290,7 @@ def _get_layers_and_nodes(network, h5):
     return output_layers, node_dict
 
 def _get_vars_per_input(input_layer_arch, node_dict):
-    vars_per_input = {1: {}, 2: {}}
+    vars_per_input = {1: {}, 2: {}} # assuming there are 2 inputs?
     for lname, lidx, something in input_layer_arch:
         assert lidx == 0 and something == 0
         node = node_dict[(lname, lidx)]
@@ -289,6 +300,7 @@ def _get_vars_per_input(input_layer_arch, node_dict):
 
 def _parse_inputs(input_list, vars_per_input):
     nodes = []
+    print input_list
     for input_number, node in enumerate(input_list):
         inputs = []
         node_name = node['name']

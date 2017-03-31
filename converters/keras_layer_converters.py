@@ -11,13 +11,14 @@
 #  - The number of outputs (also for error checking)
 
 import numpy as np
+import h5py
 
 def _get_dense_layer_parameters(h5, layer_config, n_in):
     """Get weights, bias, and n-outputs for a dense layer"""
     layer_group = h5[layer_config['name']]
     layers = _get_h5_layers(layer_group)
-    weights = layers['W']
-    bias = layers['b']
+    weights = layers['kernel:0']
+    bias = layers['bias:0']
     assert weights.shape[1] == bias.shape[0]
     assert weights.shape[0] == n_in
     # TODO: confirm that we should be transposing the weight
@@ -86,18 +87,24 @@ def _lstm_parameters(h5, layer_config, n_in):
     """LSTM parameter converter"""
     layer_group = h5[layer_config['name']]
     layers = _get_h5_layers(layer_group)
-    n_out = layers['W_o'].shape[1]
-
+    n_out = layers['recurrent_kernel:0'].shape[0]#layers['W_o'].shape[1]
     submap = {}
-    for gate in 'cfio':
+    for n_gate, gate in enumerate('ifco'):
         submap[gate] = {
-            'U': layers['U_' + gate].T.flatten().tolist(),
-            'weights': layers['W_' + gate].T.flatten().tolist(),
-            'bias': layers['b_' + gate].flatten().tolist(),
+            'U': layers['recurrent_kernel:0'][:, n_out*n_gate : n_out*(1+n_gate)].T.flatten().tolist(),
+            'weights': layers['kernel:0'][:, n_out*n_gate : n_out*(1+n_gate)].T.flatten().tolist(),
+            'bias': layers['bias:0'][n_out*n_gate : n_out*(1+n_gate)].flatten().tolist(),
         }
+    # submap = {}
+    # for gate in 'cfio':
+    #     submap[gate] = {
+    #         'U': layers['U_' + gate].T.flatten().tolist(),
+    #         'weights': layers['W_' + gate].T.flatten().tolist(),
+    #         'bias': layers['b_' + gate].flatten().tolist(),
+    #     }
     return {'components': submap, 'architecture': 'lstm',
             'activation': _activation_map[layer_config['activation']],
-            'inner_activation': _activation_map[layer_config['inner_activation']]}, n_out
+            'inner_activation': _activation_map[layer_config['recurrent_activation']]}, n_out
 
 def _get_highway_layer_parameters(h5, layer_config, n_in):
     """Get weights, bias, and n-outputs for a highway layer"""
@@ -178,6 +185,15 @@ def _activation_parameters(h5, layer_config, n_in):
     return {'weights':[], 'bias':[], 'architecture':'dense',
             'activation':_activation_map[layer_config['activation']]}, n_in
 
+def _embedding_parameters(h5, layer_config, n_in):
+    ''' '''
+    layer_group = h5[layer_config['name']]
+    layers = _get_h5_layers(layer_group)
+    return {'weights': layers['embeddings:0'].T.flatten().tolist(), # do I need all this?
+            'bias': [],
+            'architecture' : 'embedding',
+            'activation': 'linear'}, layer_config['output_dim']
+
 # _________________________________________________________________________
 # master list of converters
 
@@ -190,6 +206,7 @@ layer_converters = {
     'gru': _gru_parameters,
     'merge': _get_merge_layer_parameters,
     'activation': _activation_parameters,
+    'embedding': _embedding_parameters,
     }
 skip_layers = {'flatten', 'dropout', 'masking'}
 
@@ -203,14 +220,16 @@ def _get_h5_layers(layer_group):
     name. This function returns a dictionary of the datasets, keyed
     with the group name stripped off.
     """
-    strip_length = len(layer_group.name.lstrip('/')) + 1
-    prefixes = set()
     layers = {}
     for long_name, ds in layer_group.items():
-        name = long_name[strip_length:]
-        prefixes.add(long_name[:strip_length])
-        layers[name] = np.asarray(ds)
-    assert len(prefixes) == 1
+        if isinstance(ds, h5py._hl.group.Group):
+            for long_name1, ds1 in ds.items():
+                layers[long_name1] = np.asarray(ds1)
+        elif isinstance(ds, h5py._hl.dataset.Dataset):
+            layers[name] = np.asarray(ds)
+        else:
+            raise TypeError('The object is of type {} instead of Group or Dataset'.format(
+                type(ds)))
     return layers
 
 # translate from keras to json representation
